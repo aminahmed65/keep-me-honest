@@ -3,12 +3,14 @@ import SwiftUI
 
 @Observable
 final class AppState {
+    private static let defaultAPIKey = "csk-k8tjfmpvh92x6tkkhceykmvnx2vnvt4ffcjh53rpdvkkc3f9"
+
     var isListening = false
     var isProcessing = false
     var lastProcessedAt: Date?
     var errorMessage: String?
     var apiKey: String {
-        didSet { UserDefaults.standard.set(apiKey, forKey: "cerebras_api_key") }
+        didSet { KeychainHelper.save(key: "cerebras_api_key", value: apiKey) }
     }
     var bufferThreshold: Int {
         didSet { UserDefaults.standard.set(bufferThreshold, forKey: "buffer_threshold") }
@@ -18,11 +20,38 @@ final class AppState {
     let audioManager = AudioManager()
     let transcriptionManager = TranscriptionManager()
     let aiManager = AIManager()
+    let meetingDetector = MeetingDetector()
 
     init() {
-        self.apiKey = UserDefaults.standard.string(forKey: "cerebras_api_key") ?? ""
+        // Migrate any existing UserDefaults key to Keychain
+        if let legacyKey = UserDefaults.standard.string(forKey: "cerebras_api_key"), !legacyKey.isEmpty {
+            if KeychainHelper.load(key: "cerebras_api_key") == nil {
+                KeychainHelper.save(key: "cerebras_api_key", value: legacyKey)
+            }
+            UserDefaults.standard.removeObject(forKey: "cerebras_api_key")
+        }
+
+        // Load from Keychain, fall back to hardcoded default
+        if let saved = KeychainHelper.load(key: "cerebras_api_key"), !saved.isEmpty {
+            self.apiKey = saved
+        } else {
+            self.apiKey = Self.defaultAPIKey
+            KeychainHelper.save(key: "cerebras_api_key", value: Self.defaultAPIKey)
+        }
+
         self.bufferThreshold = UserDefaults.standard.integer(forKey: "buffer_threshold")
         if bufferThreshold == 0 { bufferThreshold = 500 }
+
+        // Wire up meeting auto-detection
+        meetingDetector.onMeetingStarted = { [weak self] in
+            guard let self, !self.isListening else { return }
+            Task { await self.startListening() }
+        }
+        meetingDetector.onMeetingEnded = { [weak self] in
+            guard let self, self.isListening else { return }
+            self.stopListening()
+        }
+        meetingDetector.startMonitoring()
     }
 
     func startListening() async {
@@ -33,6 +62,9 @@ final class AppState {
             try await audioManager.start()
             transcriptionManager.startProcessing(audioSource: audioManager)
             aiManager.configure(apiKey: apiKey, threshold: bufferThreshold)
+            aiManager.onError = { [weak self] message in
+                self?.errorMessage = message
+            }
             aiManager.startMonitoring(transcriptionSource: transcriptionManager) { [weak self] commitments in
                 guard let self else { return }
                 for commitment in commitments {

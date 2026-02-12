@@ -7,6 +7,7 @@ final class AIManager {
     private let contextBuffer = ContextBuffer()
     private let apiClient = CerebrasAPIClient()
     private var onCommitments: (([Commitment]) -> Void)?
+    var onError: ((String) -> Void)?
     private var isMonitoring = false
     private var processingTask: Task<Void, Never>?
 
@@ -60,6 +61,11 @@ final class AIManager {
                 }
             } catch {
                 print("[AIManager] Extraction failed: \(error.localizedDescription)")
+                // Re-append transcript so it's not lost after all retries failed
+                self.contextBuffer.append(transcript)
+                await MainActor.run {
+                    self.onError?(error.localizedDescription)
+                }
             }
         }
     }

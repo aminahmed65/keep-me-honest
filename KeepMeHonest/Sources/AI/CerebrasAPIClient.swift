@@ -34,25 +34,7 @@ final class CerebrasAPIClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await session.data(for: request)
-        } catch {
-            throw APIError.networkError(error)
-        }
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw APIError.invalidResponse
-        }
-
-        guard httpResponse.statusCode == 200 else {
-            if httpResponse.statusCode == 429 {
-                throw APIError.rateLimited
-            }
-            let body = String(data: data, encoding: .utf8) ?? "no body"
-            throw APIError.httpError(statusCode: httpResponse.statusCode, body: body)
-        }
+        let (data, _) = try await performRequest(request)
 
         // Parse the OpenAI-compatible response: choices[0].message.content
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -64,6 +46,63 @@ final class CerebrasAPIClient {
         }
 
         return try CommitmentExtractor.parseResponse(content)
+    }
+
+    private func performRequest(_ request: URLRequest, retries: Int = 3) async throws -> (Data, HTTPURLResponse) {
+        var lastError: Error = APIError.invalidResponse
+        for attempt in 0..<retries {
+            do {
+                let (data, response) = try await session.data(for: request)
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw APIError.invalidResponse
+                }
+
+                if httpResponse.statusCode == 200 {
+                    return (data, httpResponse)
+                }
+
+                if httpResponse.statusCode == 429 {
+                    // Check for Retry-After header
+                    let retryAfter: Double
+                    if let retryHeader = httpResponse.value(forHTTPHeaderField: "Retry-After"),
+                       let seconds = Double(retryHeader) {
+                        retryAfter = seconds
+                    } else {
+                        retryAfter = pow(2.0, Double(attempt))
+                    }
+                    if attempt < retries - 1 {
+                        try await Task.sleep(nanoseconds: UInt64(retryAfter * 1_000_000_000))
+                        continue
+                    }
+                    throw APIError.rateLimited
+                }
+
+                // Non-429 HTTP errors: don't retry (auth errors, bad requests, etc.)
+                let body = String(data: data, encoding: .utf8) ?? "no body"
+                throw APIError.httpError(statusCode: httpResponse.statusCode, body: body)
+
+            } catch let error as APIError {
+                // Don't retry non-retryable API errors
+                switch error {
+                case .rateLimited:
+                    lastError = error
+                    // Already handled above with sleep+continue; if we get here it's the last attempt
+                    continue
+                case .httpError:
+                    throw error
+                default:
+                    lastError = error
+                }
+            } catch {
+                // Network errors: retry with exponential backoff
+                lastError = APIError.networkError(error)
+                if attempt < retries - 1 {
+                    let delay = pow(2.0, Double(attempt)) // 1s, 2s, 4s
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                }
+            }
+        }
+        throw lastError
     }
 
     enum APIError: LocalizedError {

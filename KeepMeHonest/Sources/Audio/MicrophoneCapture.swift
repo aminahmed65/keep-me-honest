@@ -6,6 +6,7 @@ final class MicrophoneCapture {
     private let audioEngine = AVAudioEngine()
     private var converter: AVAudioConverter?
     private var isRunning = false
+    private let conversionQueue = DispatchQueue(label: "com.keepmehonest.audioconversion", qos: .userInitiated)
 
     func requestPermission() async -> Bool {
         await withCheckedContinuation { continuation in
@@ -19,7 +20,23 @@ final class MicrophoneCapture {
         guard !isRunning else { return }
 
         let inputNode = audioEngine.inputNode
+
+        // Enable echo cancellation BEFORE getting format (it changes the format)
+        do {
+            try inputNode.setVoiceProcessingEnabled(true)
+        } catch {
+            print("[MicrophoneCapture] Voice processing not available: \(error.localizedDescription)")
+        }
+
+        // Prepare the engine to initialize audio units
+        audioEngine.prepare()
+
         let inputFormat = inputNode.outputFormat(forBus: 0)
+
+        // Validate format
+        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+            throw AudioCaptureError.formatCreationFailed
+        }
 
         guard let targetFormat = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
@@ -35,8 +52,12 @@ final class MicrophoneCapture {
             throw AudioCaptureError.converterCreationFailed
         }
 
-        inputNode.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
-            self?.processBuffer(buffer, targetFormat: targetFormat)
+        // Use larger buffer to prevent overload
+        inputNode.installTap(onBus: 0, bufferSize: 8192, format: inputFormat) { [weak self] buffer, _ in
+            // Offload conversion to background queue to prevent audio thread overload
+            self?.conversionQueue.async {
+                self?.processBuffer(buffer, targetFormat: targetFormat)
+            }
         }
 
         try audioEngine.start()

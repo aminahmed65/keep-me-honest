@@ -2,8 +2,9 @@ import ScreenCaptureKit
 import CoreMedia
 import AVFoundation
 
-final class SystemAudioCapture: NSObject, SCStreamOutput {
+final class SystemAudioCapture: NSObject, SCStreamOutput, SCStreamDelegate {
     var onAudioBuffer: (([Float]) -> Void)?
+    var onError: ((Error) -> Void)?
 
     private var stream: SCStream?
     private var isRunning = false
@@ -36,7 +37,7 @@ final class SystemAudioCapture: NSObject, SCStreamOutput {
         config.height = 2
         config.minimumFrameInterval = CMTime(value: 1, timescale: 1)
 
-        let stream = SCStream(filter: filter, configuration: config, delegate: nil)
+        let stream = SCStream(filter: filter, configuration: config, delegate: self)
         try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: .global(qos: .userInteractive))
         try await stream.startCapture()
 
@@ -61,6 +62,14 @@ final class SystemAudioCapture: NSObject, SCStreamOutput {
         if !samples.isEmpty {
             onAudioBuffer?(samples)
         }
+    }
+
+    // MARK: - SCStreamDelegate
+
+    func stream(_ stream: SCStream, didStopWithError error: Error) {
+        isRunning = false
+        self.stream = nil
+        onError?(error)
     }
 
     private func extractFloatSamples(from sampleBuffer: CMSampleBuffer) -> [Float]? {

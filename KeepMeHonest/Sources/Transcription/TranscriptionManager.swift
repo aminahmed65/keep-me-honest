@@ -30,11 +30,21 @@ final class TranscriptionManager {
             }
         }
 
-        // Connect to audio chunks
-        audioSource.onAudioChunk = { [weak self] audioBuffer in
+        // Connect to mic audio — label as [You]
+        audioSource.onMicChunk = { [weak self] audioBuffer in
             guard let self, self.isActive else { return }
             Task { [weak self] in
-                await self?.processAudioChunk(audioBuffer)
+                guard let self else { return }
+                await self.processAudioChunk(audioBuffer, speaker: "[You]")
+            }
+        }
+
+        // Connect to system audio — label as [Others]
+        audioSource.onSystemChunk = { [weak self] audioBuffer in
+            guard let self, self.isActive else { return }
+            Task { [weak self] in
+                guard let self else { return }
+                await self.processAudioChunk(audioBuffer, speaker: "[Others]")
             }
         }
     }
@@ -49,20 +59,21 @@ final class TranscriptionManager {
         currentTranscript = ""
     }
 
-    private func processAudioChunk(_ audioBuffer: [Float]) async {
+    private func processAudioChunk(_ audioBuffer: [Float], speaker: String) async {
         guard isActive, isModelLoaded else { return }
 
         do {
             let text = try await engine.transcribe(audioBuffer: audioBuffer)
             guard !text.isEmpty else { return }
+            let labeled = "\(speaker): \(text)"
 
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 if !self.currentTranscript.isEmpty {
-                    self.currentTranscript += " "
+                    self.currentTranscript += "\n"
                 }
-                self.currentTranscript += text
-                self.onNewSegment?(text)
+                self.currentTranscript += labeled
+                self.onNewSegment?(labeled)
             }
         } catch {
             print("[TranscriptionManager] Transcription error: \(error.localizedDescription)")

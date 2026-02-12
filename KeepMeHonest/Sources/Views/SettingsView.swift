@@ -36,6 +36,25 @@ struct SettingsView: View {
                 )
             }
 
+            // Meeting Auto-Detection
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Meeting Detection")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                @Bindable var detector = appState.meetingDetector
+                Toggle("Auto-start when meeting detected", isOn: $detector.autoStartEnabled)
+                    .font(.caption)
+                Text("Monitors for Zoom, Teams, Meet, FaceTime, Webex, and other meeting apps.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                if appState.meetingDetector.isMeetingActive,
+                   let app = appState.meetingDetector.activeMeetingApp {
+                    Label("\(app) detected", systemImage: "video.fill")
+                        .font(.caption)
+                        .foregroundStyle(.green)
+                }
+            }
+
             // Permissions status
             VStack(alignment: .leading, spacing: 4) {
                 Text("Permissions")
@@ -77,6 +96,6 @@ struct SettingsView: View {
             }
         }
         .padding(20)
-        .frame(width: 340, height: 380)
+        .frame(width: 340, height: 460)
     }
 }

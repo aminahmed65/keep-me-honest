@@ -72,9 +72,20 @@ struct ContentView: View {
                 .font(.caption)
                 .foregroundStyle(.orange)
         } else if appState.isListening {
-            Label("Listening", systemImage: "waveform")
+            if let meetingApp = appState.meetingDetector.activeMeetingApp {
+                Label("\(meetingApp) meeting detected", systemImage: "video.fill")
+                    .font(.caption)
+                    .foregroundStyle(.green)
+            } else {
+                Label("Listening", systemImage: "waveform")
+                    .font(.caption)
+                    .foregroundStyle(.green)
+            }
+        } else if appState.meetingDetector.isMeetingActive,
+                  let meetingApp = appState.meetingDetector.activeMeetingApp {
+            Label("\(meetingApp) detected — auto-start off", systemImage: "video")
                 .font(.caption)
-                .foregroundStyle(.green)
+                .foregroundStyle(.blue)
         } else {
             Label("Idle", systemImage: "moon.zzz")
                 .font(.caption)
