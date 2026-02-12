@@ -1,24 +1,4 @@
- 3: System Audio Capture (The Hard Part)
-
-[ ] Implement ScreenCaptureKit (SCStream) to capture system audio (what other people say in Zoom/Meet).
-
-[ ] Build an audio mixer to combine the AVAudioEngine (Mic) stream and ScreenCaptureKit (System) stream.
-
-[ ] Feed the combined audio buffer into WhisperKit for unified transcription.
-
-[ ] Phase 4: The "Thinking" Pipeline (Z.ai GLM 4.7 on Cerebras)
-
-[ ] Implement a "Context Buffer" to store transcribed text strings.
-
-[ ] Build a timer/threshold logic (e.g., trigger API call every 3-5 minutes or after X words).
-
-[ ] Write the HTTP POST request to the Cerebras API using Z.ai GLM 4.7.
-
-[ ] Configure the prompt to extract commitments and return strictly typed JSON.
-
-[ ] Phase 5: Storage & Triage
-
-[ ] Parse the JSON reProduct Specification: Keep Me Honest (macOS MVP)
+Product Specification: Keep Me Honest (macOS MVP)
 
 0. MVP Development Checklist
 
@@ -42,7 +22,27 @@ Use this checklist to track your progress from "Hello World" to a working protot
 
 [ ] Successfully transcribe your own voice in real-time and print to Xcode console.
 
-[ ] Phasesponse in Swift.
+[ ] Phase 3: System Audio Capture (The Hard Part)
+
+[ ] Implement ScreenCaptureKit (SCStream) to capture system audio (what other people say in Zoom/Meet).
+
+[ ] Build an audio mixer to combine the AVAudioEngine (Mic) stream and ScreenCaptureKit (System) stream.
+
+[ ] Feed the combined audio buffer into WhisperKit for unified transcription.
+
+[ ] Phase 4: The "Thinking" Pipeline (Z.ai GLM 4.7 on Cerebras)
+
+[ ] Implement a "Context Buffer" to store transcribed text strings.
+
+[ ] Build a timer/threshold logic (e.g., trigger API call every 3-5 minutes or after X words).
+
+[ ] Write the HTTP POST request to the Cerebras API using Z.ai GLM 4.7.
+
+[ ] Configure the prompt to extract commitments and return strictly typed JSON.
+
+[ ] Phase 5: Storage & Triage
+
+[ ] Parse the JSON response in Swift.
 
 [ ] Save extracted tasks to local UserDefaults or a local JSON file.
 
