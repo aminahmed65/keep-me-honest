@@ -72,19 +72,8 @@ function generalHTML() {
     </div>
     <div class="card">
       <div class="card-row">
-        <label>Transcription Provider</label>
-        <select id="provider">
-          <option value="groq" ${settings.transcriptionProvider === 'groq' ? 'selected' : ''}>Groq (free)</option>
-          <option value="openai" ${settings.transcriptionProvider === 'openai' ? 'selected' : ''}>OpenAI</option>
-        </select>
-      </div>
-      <div class="card-row">
-        <label>Groq API Key</label>
-        <input type="password" id="groqKey" value="${settings.groqApiKey || ''}" placeholder="gsk_...">
-      </div>
-      <div class="card-row">
-        <label>OpenAI API Key</label>
-        <input type="password" id="openaiKey" value="${settings.openaiApiKey || ''}" placeholder="sk-...">
+        <label>Transcription</label>
+        <span style="font-size:12px; color:var(--text-secondary);">Parakeet v3 (local)</span>
       </div>
     </div>`;
 }
@@ -110,7 +99,7 @@ function promisesHTML() {
         <div style="font-size:11px; color:var(--text-secondary); line-height:1.6;">
           1. Press the hotkey to start recording<br>
           2. Speak naturally, press again to stop<br>
-          3. Speech is transcribed via Whisper API<br>
+          3. Speech is transcribed locally via Parakeet v3<br>
           4. Transcript is pasted into your active app<br>
           5. Promises are extracted via OpenRouter and appear in the popover
         </div>
@@ -165,19 +154,7 @@ function peopleHTML() {
 
 // --- Attach event listeners ---
 function attachListeners() {
-  // General
-  const providerEl = document.getElementById('provider');
-  if (providerEl) {
-    providerEl.addEventListener('change', () => save({ transcriptionProvider: providerEl.value }));
-  }
-  const groqEl = document.getElementById('groqKey');
-  if (groqEl) {
-    groqEl.addEventListener('change', () => save({ groqApiKey: groqEl.value }));
-  }
-  const openaiEl = document.getElementById('openaiKey');
-  if (openaiEl) {
-    openaiEl.addEventListener('change', () => save({ openaiApiKey: openaiEl.value }));
-  }
+  // General — no dynamic listeners needed (Parakeet is local, hotkey display-only for now)
 
   // Promises
   const toggleExtract = document.getElementById('toggle-extraction');

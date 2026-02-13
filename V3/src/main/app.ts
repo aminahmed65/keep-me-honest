@@ -11,6 +11,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { store } from './store';
 import { registerIpcHandlers } from './ipc-handlers';
+import { stopDaemon } from './transcription';
 import { IPC } from '../shared/types';
 
 let tray: Tray | null = null;
@@ -87,10 +88,18 @@ function createPopoverWindow(): void {
 
   popoverWindow.loadFile(path.join(__dirname, '../../ui/popover.html'));
 
+  // DEBUG: pipe renderer console to main stdout
+  popoverWindow.webContents.on('console-message', (_e, _level, message) => {
+    console.log(`[renderer] ${message}`);
+  });
+
+  // Delay blur-hide so button clicks can fire first
   popoverWindow.on('blur', () => {
-    if (popoverWindow?.isVisible()) {
-      popoverWindow.hide();
-    }
+    setTimeout(() => {
+      if (popoverWindow?.isVisible() && !popoverWindow.isFocused()) {
+        popoverWindow.hide();
+      }
+    }, 150);
   });
 }
 
@@ -200,6 +209,7 @@ app.whenReady().then(() => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+  stopDaemon();
 });
 
 app.on('window-all-closed', () => {

@@ -78,10 +78,9 @@ export function registerIpcHandlers(
     const win = getPopover();
 
     try {
-      // 1. Transcribe
+      // 1. Transcribe via local Parakeet
       win?.webContents.send(IPC.TRANSCRIPTION_STATUS, 'Transcribing...');
-      const settings = store.getSettings();
-      const transcript = await transcribeAudio(buffer, settings);
+      const transcript = await transcribeAudio(buffer);
       console.log(`[ipc] Transcript: ${transcript.slice(0, 80)}...`);
 
       // 2. Auto-paste
@@ -91,7 +90,8 @@ export function registerIpcHandlers(
       }
 
       // 3. Extract promises
-      if (settings.commitmentExtractionEnabled && settings.openRouterApiKey) {
+      const currentSettings = store.getSettings();
+      if (currentSettings.commitmentExtractionEnabled && currentSettings.openRouterApiKey) {
         win?.webContents.send(IPC.TRANSCRIPTION_STATUS, 'Extracting promises...');
         try {
           const extracted = await extractPromises(transcript);

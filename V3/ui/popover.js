@@ -168,8 +168,16 @@ function stopRecording() {
 }
 
 // --- Event listeners ---
-document.getElementById('settings-btn').onclick = () => window.api.openSettings();
-document.getElementById('quit-btn').onclick = () => window.api.quit();
+document.getElementById('settings-btn').onclick = () => {
+  console.log('[popover] Settings clicked');
+  if (window.api) window.api.openSettings();
+  else console.error('window.api not available!');
+};
+document.getElementById('quit-btn').onclick = () => {
+  console.log('[popover] Quit clicked');
+  if (window.api) window.api.quit();
+  else console.error('window.api not available!');
+};
 
 document.getElementById('menu-btn').onclick = (e) => {
   e.stopPropagation();
