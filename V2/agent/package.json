@@ -1,0 +1,23 @@
+{
+  "name": "keep-me-honest-agent",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "npx tsx src/headless.ts",
+    "tui": "npx tsx src/cli.tsx"
+  },
+  "dependencies": {
+    "@openrouter/sdk": "latest",
+    "eventemitter3": "^5.0.0",
+    "ink-text-input": "^6.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/react": "^18.3.0",
+    "ink": "^5.1.0",
+    "react": "^18.3.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.4.0"
+  }
+}

@@ -1,0 +1,695 @@
+import SwiftUI
+import SwiftData
+import AppKit
+import HotKey
+import ServiceManagement
+import AVFoundation
+import Combine
+import os.log
+
+@main
+struct FluidVoiceApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    
+    var body: some Scene {
+        // This is a menu bar app, so we just need to define menu commands
+        // All windows are created programmatically
+        WindowGroup {
+            EmptyView()
+                .frame(width: 0, height: 0)
+                .tint(Color(red: 0.3, green: 0.3, blue: 0.3))
+                .onAppear {
+                    // Hide the empty window immediately
+                    NSApplication.shared.windows.first?.orderOut(nil)
+
+                    // Note: macOS doesn't allow direct accent color override
+                }
+        }
+        .windowStyle(.hiddenTitleBar)
+        .windowResizability(.contentSize)
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button(LocalizedStrings.Menu.settings) {
+                    appDelegate.openSettings()
+                }
+                // Remove keyboard shortcut hint for menu bar app
+            }
+            CommandGroup(replacing: .windowArrangement) {
+                Button(LocalizedStrings.Menu.closeWindow) {
+                    NSApplication.shared.keyWindow?.orderOut(nil)
+                }
+                // No keyboard shortcut hints
+            }
+        }
+    }
+    
+    /// Creates a fallback container if DataManager initialization fails
+    private func createFallbackContainer() -> ModelContainer {
+        do {
+            let schema = Schema([TranscriptionRecord.self])
+            let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+            return try ModelContainer(for: schema, configurations: [config])
+        } catch {
+            fatalError("Failed to create fallback ModelContainer: \(error)")
+        }
+    }
+}
+
+@MainActor
+class AppDelegate: NSObject, NSApplicationDelegate {
+    var statusItem: NSStatusItem?
+    private var hotKeyManager: HotKeyManager?
+    private var keyboardEventHandler: KeyboardEventHandler?
+    private var windowController = WindowController()
+    private var audioRecorder: AudioRecorder?
+    private var recordingAnimationTimer: DispatchSourceTimer?
+    var miniIndicator = MiniRecordingIndicator()
+    // SmartPasteTestWindow removed for debugging
+
+    // Recording state protection
+    private var isHandlingHotkey = false
+    private var lastHotkeyTime: TimeInterval = 0
+    private var recordingTimeout: Timer?
+    
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        Logger.app.infoDev("🚀 FluidVoice starting up...")
+
+        // Register default values for UserDefaults
+        UserDefaults.standard.register(defaults: [
+            "commitmentExtractionEnabled": true
+        ])
+
+        // Initialize crash reporting early - before anything else that might crash
+        CrashReporter.shared.initializeCrashReporting()
+        
+        // Skip UI initialization in test environment
+        let isTestEnvironment = NSClassFromString("XCTestCase") != nil
+        if isTestEnvironment {
+            Logger.app.infoDev("Test environment detected - skipping UI initialization")
+            return
+        }
+        
+        Logger.app.infoDev("🖥️ UI initialization started")
+        
+        // Initialize DataManager first
+        do {
+            try DataManager.shared.initialize()
+            Logger.app.infoDev("DataManager initialized successfully")
+        } catch {
+            Logger.app.errorDev("Failed to initialize DataManager: \(error.localizedDescription)")
+            // App continues with in-memory fallback
+        }
+        
+        // Background preloading now handled by ParakeetDaemon (Parakeet-only architecture)
+        Logger.app.infoDev("✅ Using Parakeet-only transcription")
+        
+        // Initialize MLX model cache at startup (async, non-blocking)
+        Logger.app.infoDev("🔄 Starting MLX Task...")
+        Task {
+            await MLXModelManager.shared.refreshModelList()
+
+            // Set cached flags for instant transcription checks
+            let downloadedModels = await MLXModelManager.shared.downloadedModels
+            ParakeetService.isModelAvailable = downloadedModels.contains(MLXModelManager.parakeetRepo)
+
+            Logger.app.infoDev("MLX model cache initialized at startup - Parakeet available: \(ParakeetService.isModelAvailable)")
+
+            // Early daemon initialization for zero cold start (always enabled for optimal performance)
+            if ParakeetService.isModelAvailable {
+                do {
+                    Logger.app.infoDev("🚀 Starting Parakeet daemon preload...")
+                    let pyURL = try await UvBootstrap.ensureVenv(userPython: nil) { msg in
+                        Logger.app.infoDev("FluidVoiceApp uv: \(msg)")
+                    }
+                    try await ParakeetDaemon.shared.start(pythonPath: pyURL.path)
+                    Logger.app.infoDev("✅ Parakeet daemon preloaded at startup - zero cold start ready")
+                } catch {
+                    Logger.app.infoDev("⚠️ Daemon preload failed (will fallback to lazy loading): \(error.localizedDescription)")
+                }
+            } else {
+                // Check if user has Parakeet selected but model is missing
+                let currentProvider = UserDefaults.standard.string(forKey: "transcriptionProvider") ?? TranscriptionProvider.local.rawValue
+                if currentProvider == TranscriptionProvider.parakeet.rawValue {
+                    Logger.app.infoDev("⚠️ Parakeet provider selected but model missing - showing download screen")
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        WelcomeWindow.showWelcomeDialog(initialStep: .modelDownload)
+                    }
+                }
+            }
+        }
+        
+        // Setup app configuration
+        Logger.app.infoDev("🔄 Starting AppSetupHelper...")
+        // TEMPORARY: Skip AppSetupHelper to avoid startup hang
+        // AppSetupHelper.setupApp()
+        Logger.app.infoDev("⚠️ AppSetupHelper SKIPPED (temporary fix)")
+        
+        // Initialize audio recorder (pre-warming happens in init)
+        Logger.app.infoDev("🔄 Initializing AudioRecorder...")
+        audioRecorder = AudioRecorder()
+        Logger.app.infoDev("✅ AudioRecorder initialized")
+        
+        // Connect volume monitoring to mini indicator
+        Logger.app.infoDev("🔄 Setting up volume monitoring...")
+        setupVolumeMonitoring()
+        Logger.app.infoDev("✅ Volume monitoring setup completed")
+        
+        // Create menu bar item
+        Logger.app.infoDev("🔄 Creating menu bar item...")
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        Logger.app.infoDev("✅ Menu bar item created")
+        
+        if let button = statusItem?.button {
+            button.image = AppSetupHelper.createMenuBarIcon()
+            // No button action needed - menu bar app only
+        }
+        
+        // Create menu
+        let menu = NSMenu()
+        menu.addItem(NSMenuItem(title: "Promises", action: #selector(showPromises), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: LocalizedStrings.Menu.history, action: #selector(showHistory), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: LocalizedStrings.Menu.settings, action: #selector(openSettings), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Help", action: #selector(showHelp), keyEquivalent: ""))
+        menu.addItem(NSMenuItem.separator())
+        
+        // Add crash logs menu item
+        let crashLogsItem = NSMenuItem(title: "Show Crash Logs", action: #selector(showCrashLogs), keyEquivalent: "")
+        menu.addItem(crashLogsItem)
+        
+        menu.addItem(NSMenuItem.separator())
+        menu.addItem(NSMenuItem(title: LocalizedStrings.Menu.quit, action: #selector(NSApplication.terminate(_:)), keyEquivalent: ""))
+        
+        statusItem?.menu = menu
+        Logger.app.infoDev("✅ Menu setup completed")
+        
+        // Set up global hotkey and keyboard monitoring
+        Logger.app.infoDev("🔄 Setting up HotKeyManager...")
+        hotKeyManager = HotKeyManager { [weak self] in
+            self?.handleHotkey()
+        }
+        Logger.app.infoDev("✅ HotKeyManager initialized")
+        
+        Logger.app.infoDev("🔄 Initializing KeyboardEventHandler...")
+        keyboardEventHandler = KeyboardEventHandler()
+        Logger.app.infoDev("✅ KeyboardEventHandler initialized")
+        
+        // Listen for screen configuration changes
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(screenConfigurationChanged),
+            name: NSApplication.didChangeScreenParametersNotification,
+            object: nil
+        )
+        
+        // Setup additional notification observers
+        setupNotificationObservers()
+
+        // Check for first run and show settings if needed
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            if AppSetupHelper.checkFirstRun() {
+                self.showWelcomeAndSettings()
+            }
+        }
+        
+        // Session start marker for easy log identification
+        Logger.app.infoDev("")
+        Logger.app.infoDev("")
+        Logger.app.infoDev("================================================================================")
+        Logger.app.infoDev("🚀 FLUIDVOICE SESSION STARTED 🚀")
+        Logger.app.infoDev("================================================================================")
+        Logger.app.infoDev("")
+        Logger.app.infoDev("")
+        
+        // Debug: Log audio device configuration
+        AudioDeviceInspector.logSystemAudioDevices()
+    }
+    
+    private func setupNotificationObservers() {
+        // Listen for settings requests from error dialogs
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(openSettings),
+            name: .openSettingsRequested,
+            object: nil
+        )
+        
+        // Listen for welcome completion
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(onWelcomeCompleted),
+            name: .welcomeCompleted,
+            object: nil
+        )
+        
+        // Listen for focus restoration requests
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(restoreFocusToPreviousApp),
+            name: .restoreFocusToPreviousApp,
+            object: nil
+        )
+        
+        // Listen for recording stopped notifications
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(onRecordingStopped),
+            name: .recordingStopped,
+            object: nil
+        )
+    }
+    
+    private func handleHotkey() {
+        let currentTime = Date().timeIntervalSince1970
+        
+        // Debounce rapid hotkey presses (100ms minimum between calls)
+        if currentTime - lastHotkeyTime < 0.1 {
+            Logger.app.infoDev("🚫 Hotkey debounced - too rapid (within 100ms)")
+            return
+        }
+        
+        // Prevent reentrancy - if we're already processing a hotkey, ignore this one
+        if isHandlingHotkey {
+            Logger.app.infoDev("🚫 Hotkey ignored - already processing previous hotkey")
+            return
+        }
+        
+        isHandlingHotkey = true
+        lastHotkeyTime = currentTime
+        
+        // Ensure we always reset the flag even on errors
+        defer {
+            // Reset flag immediately - the debouncing is already handled above
+            isHandlingHotkey = false
+        }
+        
+        Logger.app.infoDev("🎹 Hotkey pressed! Starting handleHotkey()")
+
+        // Always use immediate recording mode (hotkey start & stop)
+        // Hotkey Start & Stop
+        guard let recorder = audioRecorder else {
+            Logger.app.errorDev("❌ AudioRecorder not available")
+            return
+        }
+
+        Logger.app.infoDev("✅ AudioRecorder is available: \(recorder)")
+
+        if recorder.isRecording {
+            Logger.app.infoDev("🛑 Stopping recording (current state: recording)")
+
+            // Cancel any existing timeout
+            recordingTimeout?.invalidate()
+            recordingTimeout = nil
+
+            // Stop recording and process in background - no window needed!
+            updateMenuBarIcon(isRecording: false)
+
+
+            // Stop recording and get the audio file
+            if let audioURL = recorder.stopRecording() {
+                Logger.app.infoDev("🔄 Starting background transcription...")
+
+                // Trigger background transcription
+                startBackgroundTranscription(audioURL: audioURL)
+            } else {
+                Logger.app.errorDev("❌ Failed to stop recording - no audio URL")
+            }
+        } else {
+            Logger.app.infoDev("🎙️ Attempting to start recording (current state: not recording)")
+
+            // Check permission first - debug both sources
+            let liveStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+            Logger.app.infoDev("🔍 LIVE TCC Status: \(liveStatus.rawValue) (\(liveStatus))")
+            Logger.app.infoDev("🔍 AudioRecorder.hasPermission: \(recorder.hasPermission)")
+
+            if !recorder.hasPermission {
+                Logger.app.errorDev("❌ No microphone permission - background recording not possible")
+                return
+            }
+
+            Logger.app.infoDev("✅ Microphone permission granted")
+
+            // Try to start recording
+            if recorder.startRecording() {
+                Logger.app.infoDev("✅ Recording started successfully!")
+                // Success - recording started in background
+                updateMenuBarIcon(isRecording: true)
+
+                // Note: Recording start sound removed - no beep
+
+                // Set up safety timeout (max 5 minutes recording)
+                setupRecordingTimeout()
+            } else {
+                Logger.app.errorDev("❌ Recording failed to start")
+            }
+        }
+    }
+    
+    private func updateMenuBarIcon(isRecording: Bool) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, let button = self.statusItem?.button else { return }
+
+            if isRecording {
+                self.startRecordingAnimation()
+                self.miniIndicator.show()
+            } else {
+                self.stopRecordingAnimation()
+                self.miniIndicator.hide()
+                // Use normal microphone icon
+                button.image = AppSetupHelper.createMenuBarIcon()
+            }
+        }
+    }
+    
+    private func startRecordingAnimation() {
+        guard let button = statusItem?.button else { return }
+        
+        // Stop any existing animation
+        stopRecordingAnimation()
+        
+        // Use the same adaptive sizing as the normal icon
+        let iconSize = AppSetupHelper.getAdaptiveMenuBarIconSize()
+        let config = NSImage.SymbolConfiguration(pointSize: iconSize, weight: .medium)
+        
+        // Create red version: red circle outline with red microphone
+        let redImage = NSImage(systemSymbolName: "microphone.circle", accessibilityDescription: "Recording")?.withSymbolConfiguration(config)
+        redImage?.isTemplate = false
+        let redOutlineImage = redImage?.tinted(with: .systemRed)
+        
+        // Create black version: use template image so it follows system appearance
+        let blackImage = NSImage(systemSymbolName: "microphone.circle", accessibilityDescription: "Recording")?.withSymbolConfiguration(config)
+        blackImage?.isTemplate = true  // Template images automatically adapt to menu bar appearance
+        
+        // Start with red state
+        button.image = redOutlineImage
+        
+        var isRedState = true // Start as red since we just set red image
+        
+        // Create DispatchSourceTimer on background queue for efficiency
+        let queue = DispatchQueue(label: "com.fluidvoice.animation", qos: .background)
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        
+        // Schedule timer to start immediately and repeat every 0.5 seconds
+        timer.schedule(deadline: .now(), repeating: 0.5)
+        
+        timer.setEventHandler { [weak button] in
+            guard let button = button else { return }
+            
+            // Toggle the state
+            isRedState.toggle()
+            
+            // Update UI on main thread
+            DispatchQueue.main.async {
+                button.image = isRedState ? redOutlineImage : blackImage
+            }
+        }
+        
+        recordingAnimationTimer = timer
+        timer.resume()
+    }
+    
+    private func stopRecordingAnimation() {
+        recordingAnimationTimer?.cancel()
+        recordingAnimationTimer = nil
+    }
+    
+    
+    
+    
+    /// Creates a fallback container if DataManager initialization fails
+    private func createFallbackModelContainer() -> ModelContainer {
+        do {
+            let schema = Schema([TranscriptionRecord.self])
+            let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+            return try ModelContainer(for: schema, configurations: [config])
+        } catch {
+            fatalError("Failed to create fallback ModelContainer: \(error)")
+        }
+    }
+    
+    @objc private func restoreFocusToPreviousApp() {
+        windowController.restoreFocusToPreviousApp()
+    }
+    
+    @objc private func onRecordingStopped() {
+        // Stop the red flashing animation when recording stops (entering processing phase)
+        updateMenuBarIcon(isRecording: false)
+    }
+    
+    @objc func openSettings() {
+        windowController.openSettings()
+    }
+    
+    
+    @objc func onWelcomeCompleted() {
+        // Open settings after welcome screen completes
+        openSettings()
+    }
+    
+    
+    @MainActor @objc func showPromises() {
+        Logger.app.infoDev("Promises menu item selected")
+        CommitmentWindowManager.shared.showCommitmentWindow()
+    }
+
+    @MainActor @objc func showHistory() {
+        Logger.app.infoDev("History menu item selected")
+        HistoryWindowManager.shared.showHistoryWindow()
+    }
+    
+    @objc func showHelp() {
+        // Show the welcome dialog as help
+        WelcomeWindow.showWelcomeDialog()
+    }
+    
+    @objc func showCrashLogs() {
+        Logger.app.infoDev("Show Crash Logs menu item selected")
+        CrashReporter.shared.showCrashLogsInFinder()
+    }
+    
+    @objc private func screenConfigurationChanged() {
+        // Reset the cached icon size when screen configuration changes
+        AppSetupHelper.resetIconSizeCache()
+        
+        // Update the menu bar icon with the new size
+        if let button = statusItem?.button {
+            button.image = AppSetupHelper.createMenuBarIcon()
+        }
+    }
+    
+    func hasAPIKey(service: String, account: String) -> Bool {
+        return KeychainService.shared.getQuietly(service: service, account: account) != nil
+    }
+    
+    func showWelcomeAndSettings() {
+        WelcomeWindow.showWelcomeDialog()
+    }
+    
+    
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        return false // Keep app running in menu bar
+    }
+    
+    func applicationWillTerminate(_ notification: Notification) {
+        // Clean up resources
+        recordingAnimationTimer?.cancel()
+        recordingAnimationTimer = nil
+        
+        // Stop any active recording timeout
+        recordingTimeout?.invalidate()
+        recordingTimeout = nil
+        
+        // Cleanup crash reporter
+        CrashReporter.shared.cleanup()
+        
+        // Gracefully shutdown Parakeet daemon
+        Task {
+            await ParakeetDaemon.shared.stop()
+        }
+        
+        // Cleanup is handled by the deinitializers of the helper classes
+        AppSetupHelper.cleanupOldTemporaryFiles()
+    }
+    
+    // MARK: - Volume Monitoring
+    
+    private func setupVolumeMonitoring() {
+        guard let recorder = audioRecorder else { return }
+        
+        // Use Combine to observe audioLevel changes
+        recorder.$audioLevel
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] level in
+                self?.miniIndicator.updateAudioLevel(level)
+            }
+            .store(in: &cancellables)
+    }
+    
+    private var cancellables = Set<AnyCancellable>()
+    
+    // MARK: - Debug Configuration
+    
+    /// Returns debug audio URL if debug mode is enabled and file exists
+    private func getDebugAudioURL() -> URL? {
+        // Check if debug mode is enabled via UserDefaults
+        let debugEnabled = UserDefaults.standard.bool(forKey: "enableDebugAudioMode")
+        guard debugEnabled else { return nil }
+        
+        // Get debug audio path from UserDefaults, fall back to hardcoded path
+        let debugAudioPath = UserDefaults.standard.string(forKey: "debugAudioFilePath") 
+            ?? "/Users/jonathan.glasmeyer/Downloads/12770092-94b0-4c06-bf19-07346d0e6c6b.wav"
+        
+        let debugURL = URL(fileURLWithPath: debugAudioPath)
+        
+        // Only use debug audio if file actually exists
+        guard FileManager.default.fileExists(atPath: debugAudioPath) else {
+            Logger.app.infoDev("🧪 DEBUG: Debug audio file not found at \(debugAudioPath)")
+            return nil
+        }
+        
+        return debugURL
+    }
+    
+    // MARK: - Recording Timeout Protection
+    
+    /// Sets up a safety timeout to prevent infinite recordings
+    private func setupRecordingTimeout() {
+        // Cancel any existing timeout
+        recordingTimeout?.invalidate()
+        
+        // Set up 5-minute timeout as safety measure
+        recordingTimeout = Timer.scheduledTimer(withTimeInterval: 300.0, repeats: false) { [weak self] _ in
+            Logger.app.infoDev("⏰ Recording timeout reached (5 minutes) - automatically stopping recording")
+            self?.forceStopRecording(reason: "timeout")
+        }
+        
+        Logger.app.infoDev("⏰ Recording timeout set (5 minutes)")
+    }
+    
+    /// Force stops recording in case of stuck states or timeouts
+    private func forceStopRecording(reason: String) {
+        Logger.app.infoDev("🚨 Force stopping recording (reason: \(reason))")
+        
+        // Cancel timeout
+        recordingTimeout?.invalidate()
+        recordingTimeout = nil
+        
+        // Reset state flags
+        isHandlingHotkey = false
+        
+        guard let recorder = audioRecorder else {
+            Logger.app.infoDev("❌ No AudioRecorder available for force stop")
+            return
+        }
+        
+        if recorder.isRecording {
+            Logger.app.infoDev("🛑 Force stopping active recording")
+            updateMenuBarIcon(isRecording: false)
+            
+            if let audioURL = recorder.stopRecording() {
+                Logger.app.infoDev("🔄 Starting background transcription after force stop...")
+                startBackgroundTranscription(audioURL: audioURL)
+            } else {
+                Logger.app.errorDev("❌ Failed to get audio URL after force stop")
+            }
+        } else {
+            Logger.app.infoDev("ℹ️ Recording already stopped - just updating UI state")
+            updateMenuBarIcon(isRecording: false)
+        }
+    }
+    
+    // MARK: - Background Transcription
+    
+    /// Handles transcription in background without showing any windows
+    /// This is the core of the background-only recording mode
+    private func startBackgroundTranscription(audioURL: URL) {
+        Task {
+            do {
+                // 🧪 TEST MODE: Use debug audio file if enabled
+                let finalAudioURL = getDebugAudioURL() ?? audioURL
+                
+                Logger.app.infoDev("🎤 Starting transcription for audio file: \(finalAudioURL.lastPathComponent)")
+                if finalAudioURL != audioURL {
+                    Logger.app.infoDev("🧪 DEBUG: Using test audio file for silent testing")
+                    Logger.app.infoDev("🧪 DEBUG: Test file path is \(finalAudioURL.path)")
+                }
+                
+                // Get user's transcription settings (same logic as ContentView)
+                let transcriptionProviderString = UserDefaults.standard.string(forKey: "transcriptionProvider") ?? "local"
+                let selectedModelString = UserDefaults.standard.string(forKey: "selectedWhisperModel") ?? "large-v3-turbo"
+                
+                guard let transcriptionProvider = TranscriptionProvider(rawValue: transcriptionProviderString) else {
+                    Logger.app.errorDev("❌ Invalid transcription provider: \(transcriptionProviderString)")
+                    return
+                }
+                
+                Logger.app.infoDev("🔧 Using transcription provider: \(transcriptionProvider.displayName)")
+                
+                // Parakeet-only transcription (simplified architecture)
+                Logger.app.infoDev("🦜 Using Parakeet transcription")
+                let pythonPath = await PythonDetector.findPythonWithMLX() ?? "/usr/bin/python3"
+                let transcribedText = try await ParakeetService.shared.transcribe(audioFileURL: finalAudioURL, pythonPath: pythonPath)
+                
+                Logger.app.infoDev("✅ Transcription completed: \(transcribedText.prefix(50))...")
+                Logger.app.infoDev("🧪 DEBUG: Full transcription is [\(transcribedText)]")
+                
+                // Auto-paste transcribed text
+                Logger.app.infoDev("🔄 Auto-pasting transcribed text...")
+                await MainActor.run {
+                    let pasteManager = PasteManager()
+                    pasteManager.pasteText(transcribedText)
+                }
+                
+                // Extract commitments in background if enabled
+                if UserDefaults.standard.bool(forKey: "commitmentExtractionEnabled"),
+                   CommitmentExtractionService.shared.hasAPIKey {
+                    Task.detached {
+                        do {
+                            let extracted = try await CommitmentExtractionService.shared.extract(from: transcribedText)
+                            if !extracted.isEmpty {
+                                await MainActor.run {
+                                    CommitmentStore.shared.add(extracted)
+                                }
+                            }
+                        } catch {
+                            Logger.commitments.errorDev("Commitment extraction failed: \(error.localizedDescription)")
+                        }
+                    }
+                }
+
+                Logger.app.info("✅ Transcription completed successfully")
+                
+            } catch {
+                Logger.app.errorDev("❌ Background transcription failed: \(error.localizedDescription)")
+                
+                // Even on error, show some feedback to user via menu bar or notification
+                await MainActor.run {
+                    // Could show a brief notification here if needed
+                }
+            }
+        }
+    }
+    
+}
+
+// Custom window class that can become key and handle keyboard input
+class ChromelessWindow: NSWindow {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
+    override var acceptsFirstResponder: Bool { true }
+}
+
+// Visual effect view for background blur
+struct VisualEffectView: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let effectView = NSVisualEffectView()
+        effectView.state = .active
+        effectView.material = .hudWindow
+        effectView.wantsLayer = true
+        effectView.layer?.cornerRadius = 12
+        effectView.layer?.masksToBounds = true
+        return effectView
+    }
+    
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
+}
+
