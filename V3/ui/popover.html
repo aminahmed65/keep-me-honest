@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; media-src blob:">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="popover">
+    <!-- Header -->
+    <div class="popover-header">
+      <h2>Promises</h2>
+      <span class="badge" id="badge" style="display:none">0</span>
+      <div class="header-actions">
+        <div class="dropdown">
+          <button class="icon-btn" id="menu-btn" title="More">&#8230;</button>
+          <div class="dropdown-menu" id="dropdown">
+            <button class="dropdown-item" id="copy-btn">Copy All</button>
+            <button class="dropdown-item" id="clear-done-btn">Clear Done</button>
+            <button class="dropdown-item danger" id="clear-all-btn">Clear All</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recording indicator -->
+    <div class="recording-pill" id="rec-pill">
+      <div class="recording-dot"></div>
+      <span>Recording...</span>
+    </div>
+
+    <!-- Status bar -->
+    <div class="status-bar" id="status-bar"></div>
+
+    <!-- Body -->
+    <div class="popover-body" id="list">
+      <div class="empty-state" id="empty">
+        <div class="icon">&#10003;</div>
+        <h3>No promises yet</h3>
+        <p>Speak naturally — promises you make<br>will appear here automatically.</p>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="popover-footer">
+      <button class="btn" id="settings-btn">
+        &#9881; Settings...
+      </button>
+      <button class="btn" id="quit-btn">
+        &#9211; Quit
+      </button>
+    </div>
+  </div>
+  <script src="popover.js"></script>
+</body>
+</html>
