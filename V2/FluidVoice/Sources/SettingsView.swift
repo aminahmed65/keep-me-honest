@@ -8,6 +8,7 @@ import os.log
 enum SettingsSection: String, CaseIterable {
     case general = "General"
     case promises = "Promises"
+    case people = "People"
     case vocabulary = "Vocabulary"
     case history = "History"
 
@@ -15,6 +16,7 @@ enum SettingsSection: String, CaseIterable {
         switch self {
         case .general: return "gearshape.fill"
         case .promises: return "checkmark.seal.fill"
+        case .people: return "person.2.fill"
         case .vocabulary: return "book.fill"
         case .history: return "clock.fill"
         }
@@ -24,6 +26,7 @@ enum SettingsSection: String, CaseIterable {
         switch self {
         case .general: return "Configure microphone, hotkeys, and basic preferences"
         case .promises: return "Extract promises and commitments from your speech"
+        case .people: return "People you regularly talk to — helps attribute promises accurately"
         case .vocabulary: return "Manage local vocabulary corrections for better accuracy"
         case .history: return "View and manage transcription history settings"
         }
@@ -47,7 +50,11 @@ struct SettingsView: View {
     @AppStorage("hasDismissedFnKeyHint") private var hasDismissedFnKeyHint = false
     @AppStorage("commitmentExtractionEnabled") private var commitmentExtractionEnabled = true
     @State private var openRouterAPIKey: String = ""
-    @AppStorage("peopleNames") private var peopleNames: String = ""
+    @ObservedObject private var peopleStore = PeopleStore.shared
+    @State private var isAddingPerson = false
+    @State private var newPersonName = ""
+    @State private var newPersonRole = ""
+    @State private var newPersonNotes = ""
 
     var body: some View {
         HSplitView {
@@ -118,6 +125,8 @@ struct SettingsView: View {
                         generalContent
                     case .promises:
                         promisesContent
+                    case .people:
+                        peopleContent
                     case .vocabulary:
                         vocabularyContent
                     case .history:
@@ -294,6 +303,38 @@ struct SettingsView: View {
                         }
                 }
             }
+
+            // Help & Diagnostics
+            SettingsCard {
+                VStack(spacing: 0) {
+                    BartenderSettingsRow("Help & Setup Guide") {
+                        Button("Open") {
+                            WelcomeWindow.showWelcomeDialog()
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    Divider()
+                        .padding(.horizontal, 16)
+
+                    BartenderSettingsRow("Crash Logs") {
+                        Button("Show in Finder") {
+                            CrashReporter.shared.showCrashLogsInFinder()
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    Divider()
+                        .padding(.horizontal, 16)
+
+                    BartenderSettingsRow("History") {
+                        Button("Open") {
+                            HistoryWindowManager.shared.showHistoryWindow()
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+            }
         }
     }
 
@@ -338,16 +379,6 @@ struct SettingsView: View {
             }
 
             SettingsCard {
-                VStack(spacing: 0) {
-                    SettingsRow("People", infoText: "Names of people you regularly talk to. Helps the AI correctly attribute promises (e.g., \"I'll send that to Reda\"). Also improves transcription accuracy.") {
-                        TextField("Reda, Sarah, John", text: $peopleNames)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: 220)
-                    }
-                }
-            }
-
-            SettingsCard {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Text("How it works")
@@ -373,6 +404,121 @@ struct SettingsView: View {
         }
         .onAppear {
             openRouterAPIKey = CommitmentExtractionService.shared.getAPIKey() ?? ""
+        }
+    }
+
+    private var peopleContent: some View {
+        VStack(spacing: 12) {
+            if peopleStore.people.isEmpty && !isAddingPerson {
+                SettingsCard {
+                    VStack(spacing: 8) {
+                        Image(systemName: "person.2")
+                            .font(.system(size: 28))
+                            .foregroundColor(.secondary.opacity(0.5))
+                        Text("No people added yet")
+                            .font(.system(size: 13))
+                            .foregroundColor(.secondary)
+                        Text("Add people you regularly talk to.\nThis helps the AI attribute promises correctly.")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary.opacity(0.7))
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 24)
+                }
+            }
+
+            ForEach(peopleStore.people) { person in
+                SettingsCard {
+                    HStack(alignment: .top, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(person.name)
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundColor(.primary)
+                            if !person.role.isEmpty {
+                                Text(person.role)
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.secondary)
+                            }
+                            if !person.notes.isEmpty {
+                                Text(person.notes)
+                                    .font(.system(size: 10))
+                                    .foregroundColor(.secondary.opacity(0.7))
+                                    .lineLimit(2)
+                            }
+                        }
+
+                        Spacer()
+
+                        Button {
+                            peopleStore.remove(id: person.id)
+                        } label: {
+                            Image(systemName: "trash")
+                                .font(.system(size: 12))
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                }
+            }
+
+            if isAddingPerson {
+                SettingsCard {
+                    VStack(spacing: 10) {
+                        TextField("Name", text: $newPersonName)
+                            .textFieldStyle(.roundedBorder)
+                        TextField("Role / Relationship (optional)", text: $newPersonRole)
+                            .textFieldStyle(.roundedBorder)
+                        TextField("Notes (optional)", text: $newPersonNotes)
+                            .textFieldStyle(.roundedBorder)
+
+                        HStack {
+                            Button("Cancel") {
+                                isAddingPerson = false
+                                newPersonName = ""
+                                newPersonRole = ""
+                                newPersonNotes = ""
+                            }
+                            .buttonStyle(.bordered)
+
+                            Spacer()
+
+                            Button("Save") {
+                                let name = newPersonName.trimmingCharacters(in: .whitespaces)
+                                guard !name.isEmpty else { return }
+                                peopleStore.add(
+                                    name: name,
+                                    role: newPersonRole.trimmingCharacters(in: .whitespaces),
+                                    notes: newPersonNotes.trimmingCharacters(in: .whitespaces)
+                                )
+                                isAddingPerson = false
+                                newPersonName = ""
+                                newPersonRole = ""
+                                newPersonNotes = ""
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(Color(red: 0.3, green: 0.3, blue: 0.3))
+                            .disabled(newPersonName.trimmingCharacters(in: .whitespaces).isEmpty)
+                        }
+                    }
+                    .padding(16)
+                }
+            } else {
+                Button {
+                    isAddingPerson = true
+                } label: {
+                    HStack {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.system(size: 14))
+                        Text("Add Person")
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.secondary)
+            }
         }
     }
 

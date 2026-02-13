@@ -58,6 +58,7 @@ struct FluidVoiceApp: App {
 @MainActor
 class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
+    private var popover: NSPopover?
     private var hotKeyManager: HotKeyManager?
     private var keyboardEventHandler: KeyboardEventHandler?
     private var windowController = WindowController()
@@ -161,26 +162,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         if let button = statusItem?.button {
             button.image = AppSetupHelper.createMenuBarIcon()
-            // No button action needed - menu bar app only
+            button.action = #selector(togglePopover)
+            button.target = self
         }
-        
-        // Create menu
-        let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Promises", action: #selector(showPromises), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: LocalizedStrings.Menu.history, action: #selector(showHistory), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: LocalizedStrings.Menu.settings, action: #selector(openSettings), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Help", action: #selector(showHelp), keyEquivalent: ""))
-        menu.addItem(NSMenuItem.separator())
-        
-        // Add crash logs menu item
-        let crashLogsItem = NSMenuItem(title: "Show Crash Logs", action: #selector(showCrashLogs), keyEquivalent: "")
-        menu.addItem(crashLogsItem)
-        
-        menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: LocalizedStrings.Menu.quit, action: #selector(NSApplication.terminate(_:)), keyEquivalent: ""))
-        
-        statusItem?.menu = menu
-        Logger.app.infoDev("✅ Menu setup completed")
+
+        // Create popover
+        let pop = NSPopover()
+        pop.behavior = .transient
+        pop.contentSize = NSSize(width: 380, height: 450)
+        let popoverView = MenuBarPopoverView(
+            store: CommitmentStore.shared,
+            onOpenSettings: { [weak self] in self?.openSettings() },
+            onDismiss: { [weak pop] in pop?.performClose(nil) }
+        )
+        pop.contentViewController = NSHostingController(rootView: popoverView)
+        self.popover = pop
+        Logger.app.infoDev("✅ Popover setup completed")
         
         // Set up global hotkey and keyboard monitoring
         Logger.app.infoDev("🔄 Setting up HotKeyManager...")
@@ -435,34 +432,33 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         updateMenuBarIcon(isRecording: false)
     }
     
+    @objc func togglePopover() {
+        guard let button = statusItem?.button else { return }
+        if let pop = popover, pop.isShown {
+            pop.performClose(nil)
+        } else {
+            popover?.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        }
+    }
+
     @objc func openSettings() {
+        popover?.performClose(nil)
         windowController.openSettings()
     }
-    
-    
+
     @objc func onWelcomeCompleted() {
-        // Open settings after welcome screen completes
         openSettings()
-    }
-    
-    
-    @MainActor @objc func showPromises() {
-        Logger.app.infoDev("Promises menu item selected")
-        CommitmentWindowManager.shared.showCommitmentWindow()
     }
 
     @MainActor @objc func showHistory() {
-        Logger.app.infoDev("History menu item selected")
         HistoryWindowManager.shared.showHistoryWindow()
     }
-    
+
     @objc func showHelp() {
-        // Show the welcome dialog as help
         WelcomeWindow.showWelcomeDialog()
     }
-    
+
     @objc func showCrashLogs() {
-        Logger.app.infoDev("Show Crash Logs menu item selected")
         CrashReporter.shared.showCrashLogsInFinder()
     }
     

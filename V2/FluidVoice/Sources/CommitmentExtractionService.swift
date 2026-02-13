@@ -39,7 +39,7 @@ class CommitmentExtractionService {
         Always respond with the JSON schema provided. If no promises found, return an empty promises array with a summary explaining why.
         """
 
-        let people = loadPeopleNames()
+        let people = PeopleStore.shared.enrichedNames
         if !people.isEmpty {
             prompt += "\n\nPeople you commonly talk to: \(people.joined(separator: ", ")). Use these exact name spellings when attributing promises."
         }
@@ -102,16 +102,6 @@ class CommitmentExtractionService {
             service: Self.keychainService,
             account: Self.keychainAccount
         )
-    }
-
-    // MARK: - People Names
-
-    func loadPeopleNames() -> [String] {
-        let raw = UserDefaults.standard.string(forKey: "peopleNames") ?? ""
-        return raw
-            .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
     }
 
     // MARK: - Extraction

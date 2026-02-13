@@ -1,5 +1,19 @@
 import Foundation
 
+struct Person: Codable, Identifiable {
+    let id: UUID
+    var name: String
+    var role: String      // occupation or relationship
+    var notes: String
+
+    init(name: String, role: String = "", notes: String = "") {
+        self.id = UUID()
+        self.name = name
+        self.role = role
+        self.notes = notes
+    }
+}
+
 struct Commitment: Codable, Identifiable {
     let id: UUID
     var promise: String
