@@ -89,6 +89,42 @@ body {
   border-top: 1px solid var(--border);
 }
 
+/* --- Undo toast --- */
+.undo-toast {
+  display: none;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: var(--text);
+  color: var(--bg);
+  font-size: 11px;
+  border-radius: 6px;
+  margin: 6px 12px;
+  animation: toast-in 0.2s ease-out;
+}
+
+.undo-toast.visible { display: flex; }
+
+.undo-toast #undo-btn {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 3px;
+  margin-left: 8px;
+  flex-shrink: 0;
+}
+
+.undo-toast #undo-btn:hover { text-decoration: underline; }
+
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 /* --- Status bar --- */
 .status-bar {
   padding: 6px 16px;
@@ -148,12 +184,31 @@ body {
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  padding: 10px 16px;
+  padding: 10px 12px 10px 4px;
   border-bottom: 1px solid var(--border);
   transition: background 0.15s;
 }
 
 .commitment-row:hover { background: var(--hover); }
+
+.commitment-row.dragging { opacity: 0.4; }
+.commitment-row.drag-over { border-top: 2px solid var(--accent); }
+
+/* --- Drag handle --- */
+.drag-handle {
+  cursor: grab;
+  color: var(--text-tertiary);
+  font-size: 14px;
+  flex-shrink: 0;
+  padding: 0 4px;
+  margin-top: 1px;
+  opacity: 0;
+  transition: opacity 0.15s;
+  user-select: none;
+}
+
+.commitment-row:hover .drag-handle { opacity: 1; }
+.drag-handle:active { cursor: grabbing; }
 
 .commitment-row .checkbox {
   width: 20px; height: 20px;
@@ -504,4 +559,111 @@ body {
   background: var(--hover);
   border-radius: 4px;
   font-family: -apple-system, monospace;
+}
+
+.hotkey-display.recording {
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.hotkey-change-btn {
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.hotkey-change-btn:hover { color: var(--text); border-color: var(--text-secondary); }
+
+/* --- Add task form --- */
+.add-task-form {
+  display: none;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-card);
+}
+
+.add-task-form.visible { display: block; }
+
+.add-task-form input {
+  display: block;
+  width: 100%;
+  padding: 6px 8px;
+  margin-bottom: 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+}
+
+.add-task-form input:focus {
+  outline: none;
+  border-color: var(--text-secondary);
+}
+
+.add-task-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.add-task-cancel,
+.add-task-save {
+  padding: 3px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.add-task-save {
+  background: var(--text);
+  color: var(--bg);
+  border-color: var(--text);
+  font-weight: 500;
+}
+
+.add-task-save:hover { opacity: 0.85; }
+.add-task-cancel:hover { background: var(--hover); }
+
+/* --- Progress bar --- */
+.progress-bar-container {
+  width: 100%;
+  height: 8px;
+  background: var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+/* --- Download model button --- */
+.download-model-btn {
+  padding: 6px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  background: var(--text);
+  color: var(--bg);
+  transition: opacity 0.15s;
+}
+
+.download-model-btn:hover {
+  opacity: 0.85;
 }

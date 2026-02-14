@@ -3,3 +3,6 @@ dist/
 assets/*.png
 *.tsbuildinfo
 .DS_Store
+models/
+*.onnx
+*.tar.bz2

@@ -15,11 +15,20 @@ export interface Commitment {
   createdAt: string;
 }
 
+export type ModelStatus = 'not-downloaded' | 'downloading' | 'download-failed' | 'ready' | 'loading' | 'loaded' | 'error';
+
+export interface ModelState {
+  status: ModelStatus;
+  progress: number;
+  error: string | null;
+  modelPath: string | null;
+}
+
+export type RecordingMode = 'toggle' | 'push-to-talk';
+
 export interface Settings {
   hotkey: string;
-  transcriptionProvider: 'groq' | 'openai';
-  groqApiKey: string;
-  openaiApiKey: string;
+  recordingMode: RecordingMode;
   openRouterApiKey: string;
   commitmentExtractionEnabled: boolean;
   startAtLogin: boolean;
@@ -63,4 +72,10 @@ export const IPC = {
   COMMITMENTS_UPDATED: 'commitments-updated',
   RECORDING_STATE: 'recording-state',
   TRANSCRIPTION_STATUS: 'transcription-status',
+  GET_MODEL_STATUS: 'get-model-status',
+  DOWNLOAD_MODEL: 'download-model',
+  MODEL_STATUS_UPDATED: 'model-status-updated',
+  ADD_COMMITMENT: 'add-commitment',
+  RE_REGISTER_HOTKEY: 're-register-hotkey',
+  REORDER_COMMITMENTS: 'reorder-commitments',
 } as const;

@@ -3,6 +3,7 @@
 
 const SECTIONS = [
   { id: 'general',  icon: '\u2699\uFE0F', label: 'General',  desc: 'Configure hotkeys and basic preferences' },
+  { id: 'model',    icon: '\uD83E\uDDE0', label: 'Model',    desc: 'Manage the local speech recognition model' },
   { id: 'promises', icon: '\u2705',       label: 'Promises', desc: 'Extract promises from your speech' },
   { id: 'people',   icon: '\uD83D\uDC65', label: 'People',   desc: 'People you regularly talk to' },
 ];
@@ -11,6 +12,7 @@ let currentSection = 'general';
 let settings = {};
 let people = [];
 let isAddingPerson = false;
+let modelState = { status: 'not-downloaded', progress: 0, error: null, modelPath: null };
 
 const sidebarEl = document.getElementById('sidebar');
 const contentEl = document.getElementById('content');
@@ -19,8 +21,15 @@ const contentEl = document.getElementById('content');
 async function init() {
   settings = await window.api.getSettings();
   people = await window.api.getPeople();
+  modelState = await window.api.getModelStatus();
   renderSidebar();
   renderContent();
+
+  // Listen for model status updates
+  window.api.onModelStatusUpdated((state) => {
+    modelState = state;
+    if (currentSection === 'model') renderContent();
+  });
 }
 
 // --- Sidebar ---
@@ -53,6 +62,7 @@ function renderContent() {
 
   switch (currentSection) {
     case 'general':  html += generalHTML(); break;
+    case 'model':    html += modelHTML(); break;
     case 'promises': html += promisesHTML(); break;
     case 'people':   html += peopleHTML(); break;
   }
@@ -61,19 +71,95 @@ function renderContent() {
   attachListeners();
 }
 
+let isRecordingHotkey = false;
+
 // --- General ---
 function generalHTML() {
+  const hotkey = settings.hotkey || 'CommandOrControl+Shift+Space';
+  const displayKey = hotkey
+    .replace('CommandOrControl', 'Cmd')
+    .replace('Command', 'Cmd')
+    .replace('Control', 'Ctrl')
+    .replace(/\+/g, ' + ');
+  const mode = settings.recordingMode || 'toggle';
+
   return `
     <div class="card">
       <div class="card-row">
         <label>Global Hotkey</label>
-        <span class="hotkey-display">${settings.hotkey || 'CommandOrControl+Shift+Space'}</span>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span class="hotkey-display ${isRecordingHotkey ? 'recording' : ''}" id="hotkey-display">
+            ${isRecordingHotkey ? 'Press keys...' : displayKey}
+          </span>
+          <button class="hotkey-change-btn" id="hotkey-change-btn">
+            ${isRecordingHotkey ? 'Cancel' : 'Change'}
+          </button>
+        </div>
+      </div>
+      <div style="padding: 2px 16px 10px; font-size:10px; color:var(--text-tertiary); line-height:1.4;">
+        Any key combo works (e.g. Cmd+Shift+Space). Single keys like F5 or F13 also work.<br>
+        Bare modifier keys (Option, Shift alone) are not supported by Electron.
       </div>
     </div>
     <div class="card">
       <div class="card-row">
-        <label>Transcription</label>
-        <span style="font-size:12px; color:var(--text-secondary);">Parakeet v3 (local)</span>
+        <label>Recording Mode</label>
+        <select id="recording-mode">
+          <option value="toggle" ${mode === 'toggle' ? 'selected' : ''}>Toggle (press to start/stop)</option>
+          <option value="push-to-talk" ${mode === 'push-to-talk' ? 'selected' : ''}>Push to Talk (hold to record)</option>
+        </select>
+      </div>
+    </div>`;
+}
+
+// --- Model ---
+function modelHTML() {
+  const status = modelState.status;
+  let statusContent = '';
+
+  if (status === 'not-downloaded' || status === 'download-failed') {
+    statusContent = `
+      <div class="card">
+        <div style="padding: 16px;">
+          <div style="font-size:13px; font-weight:500; margin-bottom:8px;">Parakeet v3 (local)</div>
+          <div style="font-size:11px; color:var(--text-secondary); margin-bottom:12px;">
+            Download the speech recognition model (~640 MB) to enable transcription.
+          </div>
+          ${status === 'download-failed' ? `<div style="font-size:11px; color:var(--red); margin-bottom:8px;">Download failed: ${esc(modelState.error || 'Unknown error')}</div>` : ''}
+          <button class="download-model-btn" id="download-btn">Download Model</button>
+        </div>
+      </div>`;
+  } else if (status === 'downloading') {
+    const pct = modelState.progress || 0;
+    statusContent = `
+      <div class="card">
+        <div style="padding: 16px;">
+          <div style="font-size:13px; font-weight:500; margin-bottom:8px;">Downloading model...</div>
+          <div class="progress-bar-container">
+            <div class="progress-bar-fill" style="width: ${pct}%"></div>
+          </div>
+          <div style="font-size:11px; color:var(--text-secondary); margin-top:6px;">${pct}% complete</div>
+        </div>
+      </div>`;
+  } else {
+    // ready / loading / loaded
+    const label = status === 'loaded' ? 'Loaded and ready' : status === 'loading' ? 'Loading...' : 'Downloaded and ready';
+    statusContent = `
+      <div class="card">
+        <div class="card-row">
+          <label>Parakeet v3 (local)</label>
+          <span style="font-size:12px; color:var(--green); font-weight:500;">${label}</span>
+        </div>
+      </div>`;
+  }
+
+  return statusContent + `
+    <div class="card">
+      <div style="padding: 12px 16px;">
+        <div style="font-size:11px; color:var(--text-secondary); line-height:1.6;">
+          Runs entirely on your Mac. No audio is sent to any server.<br>
+          Model: sherpa-onnx Parakeet TDT 0.6B (int8 quantized)
+        </div>
       </div>
     </div>`;
 }
@@ -152,9 +238,88 @@ function peopleHTML() {
     ${!isAddingPerson ? '<button class="add-person-btn" id="add-btn">+ Add Person</button>' : ''}`;
 }
 
+// --- Hotkey recording ---
+let hotkeyListener = null;
+
+function startHotkeyRecording() {
+  isRecordingHotkey = true;
+  renderContent();
+
+  hotkeyListener = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    // Escape always cancels
+    if (e.key === 'Escape') {
+      stopHotkeyRecording();
+      return;
+    }
+
+    // Ignore bare modifier keys — wait for the actual key
+    if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return;
+
+    const parts = [];
+    if (e.metaKey) parts.push('CommandOrControl');
+    else if (e.ctrlKey) parts.push('CommandOrControl');
+    if (e.altKey) parts.push('Alt');
+    if (e.shiftKey) parts.push('Shift');
+
+    // Map the key
+    let key = e.key;
+    if (key === ' ') key = 'Space';
+    else if (key === 'Dead') key = 'Space'; // dead keys on some layouts
+    else if (key.length === 1) key = key.toUpperCase();
+    else if (key === 'ArrowUp') key = 'Up';
+    else if (key === 'ArrowDown') key = 'Down';
+    else if (key === 'ArrowLeft') key = 'Left';
+    else if (key === 'ArrowRight') key = 'Right';
+    // F-keys, Backspace, Delete, Tab, etc. pass through as-is
+
+    parts.push(key);
+    const combo = parts.join('+');
+
+    stopHotkeyRecording();
+    settings.hotkey = combo;
+    save({ hotkey: combo });
+    window.api.reRegisterHotkey();
+    renderContent();
+  };
+
+  document.addEventListener('keydown', hotkeyListener, true);
+}
+
+function stopHotkeyRecording() {
+  isRecordingHotkey = false;
+  if (hotkeyListener) {
+    document.removeEventListener('keydown', hotkeyListener, true);
+    hotkeyListener = null;
+  }
+}
+
 // --- Attach event listeners ---
 function attachListeners() {
-  // General — no dynamic listeners needed (Parakeet is local, hotkey display-only for now)
+  // General — hotkey change
+  const hotkeyBtn = document.getElementById('hotkey-change-btn');
+  if (hotkeyBtn) {
+    hotkeyBtn.addEventListener('click', () => {
+      if (isRecordingHotkey) {
+        stopHotkeyRecording();
+        renderContent();
+      } else {
+        startHotkeyRecording();
+      }
+    });
+  }
+
+  // General — recording mode
+  const modeSelect = document.getElementById('recording-mode');
+  if (modeSelect) {
+    modeSelect.addEventListener('change', () => {
+      settings.recordingMode = modeSelect.value;
+      save({ recordingMode: modeSelect.value });
+      window.api.reRegisterHotkey();
+    });
+  }
 
   // Promises
   const toggleExtract = document.getElementById('toggle-extraction');
@@ -168,6 +333,14 @@ function attachListeners() {
   const routerEl = document.getElementById('routerKey');
   if (routerEl) {
     routerEl.addEventListener('change', () => save({ openRouterApiKey: routerEl.value }));
+  }
+
+  // Model — download button
+  const downloadBtn = document.getElementById('download-btn');
+  if (downloadBtn) {
+    downloadBtn.addEventListener('click', () => {
+      window.api.downloadModel();
+    });
   }
 
   // People — delete buttons

@@ -5,9 +5,7 @@ import { Commitment, Person, Settings, StoreData, ExtractedCommitment } from '..
 
 const DEFAULT_SETTINGS: Settings = {
   hotkey: 'CommandOrControl+Shift+Space',
-  transcriptionProvider: 'groq',
-  groqApiKey: '',
-  openaiApiKey: '',
+  recordingMode: 'toggle',
   openRouterApiKey: '',
   commitmentExtractionEnabled: true,
   startAtLogin: false,
@@ -85,9 +83,39 @@ class Store {
     return newCommitments;
   }
 
+  addManualCommitment(promise: string, deadline: string | null): Commitment {
+    const c: Commitment = {
+      id: crypto.randomUUID(),
+      promise,
+      assignedTo: null,
+      deadline,
+      contextQuote: '',
+      isDone: false,
+      createdAt: new Date().toISOString(),
+    };
+    this.data.commitments.unshift(c);
+    this.save();
+    return c;
+  }
+
   toggleDone(id: string): void {
     const c = this.data.commitments.find(c => c.id === id);
     if (c) { c.isDone = !c.isDone; this.save(); }
+  }
+
+  reorderCommitments(orderedIds: string[]): void {
+    const map = new Map(this.data.commitments.map(c => [c.id, c]));
+    const reordered: Commitment[] = [];
+    for (const id of orderedIds) {
+      const c = map.get(id);
+      if (c) reordered.push(c);
+    }
+    // Append any that weren't in the list (safety net)
+    for (const c of this.data.commitments) {
+      if (!orderedIds.includes(c.id)) reordered.push(c);
+    }
+    this.data.commitments = reordered;
+    this.save();
   }
 
   dismissCommitment(id: string): void {

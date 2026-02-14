@@ -1,8 +1,9 @@
 import { ipcMain, clipboard, BrowserWindow } from 'electron';
 import { exec } from 'child_process';
 import { store } from './store';
-import { transcribeAudio } from './transcription';
+import { transcribeAudio, initRecognizer } from './transcription';
 import { extractPromises } from './extraction';
+import { modelManager } from './model-manager';
 import { IPC } from '../shared/types';
 
 let isRecording = false;
@@ -40,6 +41,16 @@ export function registerIpcHandlers(
     return text;
   });
 
+  ipcMain.handle(IPC.ADD_COMMITMENT, (_, promise: string, deadline: string | null) => {
+    store.addManualCommitment(promise, deadline);
+    broadcastCommitments();
+  });
+
+  ipcMain.handle(IPC.REORDER_COMMITMENTS, (_, orderedIds: string[]) => {
+    store.reorderCommitments(orderedIds);
+    broadcastCommitments();
+  });
+
   // --- People ---
   ipcMain.handle(IPC.GET_PEOPLE, () => store.getPeople());
   ipcMain.handle(IPC.ADD_PERSON, (_, name: string, role: string, notes: string) => {
@@ -58,6 +69,23 @@ export function registerIpcHandlers(
     return store.getSettings();
   });
 
+  // --- Model management ---
+  ipcMain.handle(IPC.GET_MODEL_STATUS, () => modelManager.getState());
+  ipcMain.handle(IPC.DOWNLOAD_MODEL, async () => {
+    try {
+      await modelManager.download();
+      // Auto-initialize recognizer after download
+      try {
+        await initRecognizer();
+      } catch (e) {
+        console.error('[ipc] Failed to init recognizer after download:', e);
+      }
+      return { ok: true };
+    } catch (e: any) {
+      return { ok: false, error: e.message };
+    }
+  });
+
   // --- Recording ---
   ipcMain.handle(IPC.TOGGLE_RECORDING, () => {
     isRecording = !isRecording;
@@ -68,19 +96,19 @@ export function registerIpcHandlers(
     return isRecording;
   });
 
-  ipcMain.handle(IPC.SEND_AUDIO, async (_, audioData: ArrayBuffer) => {
+  ipcMain.handle(IPC.SEND_AUDIO, async (_, audioData: { sampleRate: number; samples: number[] }) => {
     isRecording = false;
     onTrayUpdate?.(false);
 
-    const buffer = Buffer.from(audioData);
-    console.log(`[ipc] Received ${buffer.length} bytes of audio`);
+    const samples = new Float32Array(audioData.samples);
+    console.log(`[ipc] Received ${samples.length} samples at ${audioData.sampleRate}Hz`);
 
     const win = getPopover();
 
     try {
-      // 1. Transcribe via local Parakeet
+      // 1. Transcribe via local sherpa-onnx
       win?.webContents.send(IPC.TRANSCRIPTION_STATUS, 'Transcribing...');
-      const transcript = await transcribeAudio(buffer);
+      const transcript = await transcribeAudio(samples, audioData.sampleRate);
       console.log(`[ipc] Transcript: ${transcript.slice(0, 80)}...`);
 
       // 2. Auto-paste
